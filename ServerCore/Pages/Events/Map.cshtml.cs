@@ -110,7 +110,8 @@ namespace ServerCore.Pages.Events
             }
 
             // sort teams by metameta/score, add the sort index to the lookup
-            teams = teams.OrderBy(t => t.FinalMetaSolveTime)
+            teams = teams
+                .OrderBy(t => TeamHelper.ComputeSortOrderByFinalMeta(t.FinalMetaSolveTime, Event.USE_ALTERNATE_METAMETA_SCORING))
                 .ThenByDescending(t => t.Score)
                 .ThenBy(t => t.Team.Name)
                 .ToList();

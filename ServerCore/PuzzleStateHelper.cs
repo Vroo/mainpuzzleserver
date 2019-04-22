@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Transactions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Storage;
 using ServerCore.DataModel;
@@ -182,9 +183,58 @@ namespace ServerCore
 
             List<PuzzleStatePerTeam> states = await statesQ.ToListAsync();
 
+            bool solvedFinalPuzzle = states.Any(state => state.Puzzle.IsFinalPuzzle);
+            if (solvedFinalPuzzle)
+            {
+                // Solving the final puzzle is an infrequent event so it's OK to be inefficient
+                // to make sure we get it right. We must do it in a transaction so the next team
+                // that solves the final puzzle will see the result of this team solving one.
+                // TODO: It may be necessary to update all teams that solved the final puzzle whenever
+                // one does in the event that we don't get the race condition right when two teams
+                // solve the meta very close in time to each other. If that happens we can recompute
+                // the adjustment values based on solve times which we necessarily need to trust as
+                // authoritative. Note that while this function takes multiple puzzles, when we're
+                // marking the final puzzle as solved it will never actually be setting more than one
+                // at a time.
+                using (TransactionScope scope = new TransactionScope(TransactionScopeOption.Required)) {
+                    await SetSolveStateAsyncInternal(context, eventObj, puzzle, team, value, states, solvedFinalPuzzle);
+                    scope.Complete();
+                }
+            }
+            else
+            {
+                await SetSolveStateAsyncInternal(context, eventObj, puzzle, team, value, states, solvedFinalPuzzle);
+            }
+        }
+
+        private static async Task SetSolveStateAsyncInternal(
+            PuzzleServerContext context,
+            Event eventObj,
+            Puzzle puzzle,
+            Team team,
+            DateTime? value,
+            List<PuzzleStatePerTeam> states,
+            bool solvedFinalPuzzle)
+        {
+            int numberOfTeamsSolvedFinalPuzzle = 0;
+            if (eventObj.USE_ALTERNATE_METAMETA_SCORING && solvedFinalPuzzle)
+            {
+                IQueryable<bool> teamsSolvedFinalPuzzle = from Team t in context.Teams
+                                                          where t.Event == eventObj
+                                                          select t.FinalPuzzleAdjustment != 0;
+
+                numberOfTeamsSolvedFinalPuzzle = (await teamsSolvedFinalPuzzle.ToListAsync()).Count();
+            }
+
             for (int i = 0; i < states.Count; i++)
             {
-                states[i].SolvedTime = value;
+                PuzzleStatePerTeam state = states[i];
+                state.SolvedTime = value;
+                if (eventObj.USE_ALTERNATE_METAMETA_SCORING && state.Puzzle.IsFinalPuzzle)
+                {
+                    team.FinalPuzzleAdjustment = ComputeFinalPuzzleAdjustment(eventObj, state.Puzzle, numberOfTeamsSolvedFinalPuzzle);
+                }
+
             }
 
             // Award hint coins
@@ -199,7 +249,7 @@ namespace ServerCore
                     var allTeams = from Team curTeam in context.Teams
                                    where curTeam.Event == eventObj
                                    select curTeam;
-                    foreach(Team curTeam in allTeams)
+                    foreach (Team curTeam in allTeams)
                     {
                         curTeam.HintCoinCount += puzzle.HintCoinsForSolve;
                     }
@@ -217,6 +267,18 @@ namespace ServerCore
                     team,
                     value.Value);
             }
+        }
+
+        private static int ComputeFinalPuzzleAdjustment(Event eventObj, Puzzle puzzle, int numberOfTeamsSolvedFinalPuzzle)
+        {
+            // Math.Abs to avoid confusion whether delta is positive or negative.
+            int delta = Math.Abs(eventObj.FINAL_PUZZLE_DELTA);
+            int maxAdjustment = puzzle.SolveValue * 3 / 4 / delta * delta;
+            maxAdjustment = Math.Min(maxAdjustment, Math.Abs(eventObj.MAX_FINAL_PUZZLE_ADJUSTMENT));
+
+            int adjustment = delta * numberOfTeamsSolvedFinalPuzzle;
+            adjustment = Math.Min(adjustment, maxAdjustment);
+            return -adjustment;
         }
 
         /// <summary>
@@ -238,7 +300,7 @@ namespace ServerCore
         ///     A task that can be awaited for the lockout operation
         /// </returns>
         public static async Task SetEmailOnlyModeAsync(
-            PuzzleServerContext context,
+                PuzzleServerContext context,
             Event eventObj,
             Puzzle puzzle,
             Team team,

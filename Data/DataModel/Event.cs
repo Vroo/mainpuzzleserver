@@ -161,5 +161,17 @@ namespace ServerCore.DataModel
         /// in email-only mode.
         /// </summary>
         public uint MaxSubmissionCount { get; set; }
+
+        // If the final puzzle is supposed to be worth M points to the first team to finish, it
+        // must be set to M + DELTA. That is because an adjustment of 0 means the final puzzle has
+        // not been solved. The MAX_ADJUSTMENT value is the largest adjustment value (effectively
+        // limiting the number of teams that get scores adjusted by solving the metameta faster).
+        // It's planned that this is 11 * DELTA to do this only for the first 10 teams (note that
+        // this is 11 not 10). To avoid the weirdness where a team is penalized for solving the
+        // metameta if these values are messed up, there is a hard limit of 75% of the metameta
+        // solve value.
+        public readonly bool USE_ALTERNATE_METAMETA_SCORING = true;  // TODO: make a property
+        public readonly int FINAL_PUZZLE_DELTA = 50;                 // TODO: make a property
+        public readonly int MAX_FINAL_PUZZLE_ADJUSTMENT = 550;       // TODO: make a property
     }
 }

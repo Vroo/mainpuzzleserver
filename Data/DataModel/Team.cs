@@ -41,5 +41,12 @@ namespace ServerCore.DataModel
         /// The number of hint coins this team currently has used
         /// </summary>
         public int HintCoinsUsed { get; set; }
+
+        /// <summary>
+        /// The score adjustment for this team solving the final puzzle.
+        /// If this team has not solved the final puzzle, then this is 0.
+        /// Otherwise the value to be subtracted from their score.
+        /// </summary>
+        public int FinalPuzzleAdjustment { get; set; }
     }
 }

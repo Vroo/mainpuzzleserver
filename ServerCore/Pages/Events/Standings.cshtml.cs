@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using ServerCore.DataModel;
+using ServerCore.Helpers;
 using ServerCore.ModelBases;
 
 namespace ServerCore.Pages.Events
@@ -31,12 +32,14 @@ namespace ServerCore.Pages.Events
                 .Select(g => new {
                     Team = g.Key,
                     SolveCount = g.Count(),
-                    Score = g.Sum(s => s.Puzzle.SolveValue),
-                    FinalMetaSolveTime = g.Where(s => s.Puzzle.IsCheatCode).Any() ?
+                    Score = g.Sum(s => s.Puzzle.SolveValue) + g.Key.FinalPuzzleAdjustment,
+                    FinalMetaSolveTime = g.Where(
+                        s => s.Puzzle.IsCheatCode).Any() ?
                         DateTime.MaxValue :
                         (g.Where(s => s.Puzzle.IsFinalPuzzle).Select(s => s.SolvedTime).FirstOrDefault() ?? DateTime.MaxValue)
                 })
-                .OrderBy(t => t.FinalMetaSolveTime).ThenByDescending(t => t.Score).ThenBy(t => t.Team.Name)
+                .OrderBy(t => TeamHelper.ComputeSortOrderByFinalMeta(t.FinalMetaSolveTime, Event.USE_ALTERNATE_METAMETA_SCORING))
+                .ThenByDescending(t => t.Score).ThenBy(t => t.Team.Name)
                 .ToListAsync();
 
             var teams = new List<TeamStats>(teamsData.Count);

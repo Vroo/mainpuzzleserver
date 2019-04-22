@@ -122,5 +122,18 @@ namespace ServerCore.Helpers
 
             return new Tuple<bool, string>(true, "");
         }
+
+        public static DateTime ComputeSortOrderByFinalMeta(DateTime finalMetaSolveTime, bool useAlternateMetaMetaScoring)
+        {
+            if (useAlternateMetaMetaScoring && finalMetaSolveTime != DateTime.MaxValue)
+            {
+                // The alternate metameta scoring sorts by score only, except that we want to 
+                // sort all teams that solved the final meta ahead of all teams that didn't.
+                // So replace the final meta solve time with MinValue if it's set and leave 
+                // it MaxValue if it isn't.
+                return DateTime.MinValue;
+            }
+            return finalMetaSolveTime;
+        }
     }
 }
