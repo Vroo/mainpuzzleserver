@@ -186,6 +186,10 @@ namespace ServerCore
             bool solvedFinalPuzzle = states.Any(state => state.Puzzle.IsFinalPuzzle);
             if (solvedFinalPuzzle)
             {
+                // TODO: It seems like we should probably not compute the final puzzle adjustments
+                // here but just use this value to determine whether or not to call
+                // SetFinalPuzzleAdjustmentsForAllTeams asynchronously afterwards.
+
                 // Solving the final puzzle is an infrequent event so it's OK to be inefficient
                 // to make sure we get it right. We must do it in a transaction so the next team
                 // that solves the final puzzle will see the result of this team solving one.
@@ -269,16 +273,53 @@ namespace ServerCore
             }
         }
 
-        private static int ComputeFinalPuzzleAdjustment(Event eventObj, Puzzle puzzle, int numberOfTeamsSolvedFinalPuzzle)
+        /// <summary>
+        /// Compute the FinalPuzzleAdjustment for a single team.
+        /// </summary>
+        /// <returns></returns>
+        private static int ComputeFinalPuzzleAdjustment(Event eventObj, Puzzle puzzle, int finalPuzzleSolveIndex)
         {
             // Math.Abs to avoid confusion whether delta is positive or negative.
             int delta = Math.Abs(eventObj.FINAL_PUZZLE_DELTA);
             int maxAdjustment = puzzle.SolveValue * 3 / 4 / delta * delta;
             maxAdjustment = Math.Min(maxAdjustment, Math.Abs(eventObj.MAX_FINAL_PUZZLE_ADJUSTMENT));
 
-            int adjustment = delta * numberOfTeamsSolvedFinalPuzzle;
+            int adjustment = delta * (1 + finalPuzzleSolveIndex);
             adjustment = Math.Min(adjustment, maxAdjustment);
             return -adjustment;
+        }
+
+        /// <summary>
+        /// Set the final puzzle adjustment value for all teams that solved the final meta.
+        /// </summary>
+        private static async Task SetFinalPuzzleAdjustmentForAllTeams(
+            PuzzleServerContext context,
+            Event eventObj)
+        {
+            Puzzle finalPuzzle = (from Puzzle p in context.Puzzles
+                                  where p.Event == eventObj && p.IsFinalPuzzle
+                                  select p).FirstOrDefault();
+            int finalPuzzleID = finalPuzzle.ID;
+
+            using (IDbContextTransaction transaction = context.Database.BeginTransaction(System.Data.IsolationLevel.Serializable))
+            {
+                var teamsThatSolvedFinalPuzzle = await (
+                        from PuzzleStatePerTeam puzzleStatePerTeam in context.PuzzleStatePerTeam
+                        join Team team in context.Teams
+                        on puzzleStatePerTeam.TeamID equals team.ID
+                        where team.Event == eventObj
+                        && puzzleStatePerTeam.PuzzleID == finalPuzzleID
+                        select new { team, puzzleStatePerTeam })
+                    .OrderBy(tps => tps.puzzleStatePerTeam.SolvedTime)
+                    .ToListAsync();
+
+                for (int i = 0; i < teamsThatSolvedFinalPuzzle.Count; i++)
+                {
+                    var tps = teamsThatSolvedFinalPuzzle[i];
+                    tps.team.FinalPuzzleAdjustment = ComputeFinalPuzzleAdjustment(eventObj, finalPuzzle, i);
+                }
+                transaction.Commit();
+            }
         }
 
         /// <summary>
