@@ -161,5 +161,15 @@ namespace ServerCore.DataModel
         /// in email-only mode.
         /// </summary>
         public uint MaxSubmissionCount { get; set; }
+
+        // The DELTA value is the score difference between the Nth team to solve the final meta and
+        // the (N+1)th team.  The MAX_ADJUSTMENT value is the largest adjustment value (effectively
+        // limiting the number of teams that get scores adjusted by solving the final meta faster).
+        // Beware weird results if you use bad values here. If the max value > the score for the
+        // final meta than teams can be penalized for solving the final meta!
+
+        public readonly bool USE_ALTERNATE_FINAL_META_SCORING = true;  // TODO: make a property
+        public readonly int FINAL_META_DELTA = 50;                     // TODO: make a property
+        public readonly int MAX_FINAL_META_ADJUSTMENT = 500;           // TODO: make a property  
     }
 }

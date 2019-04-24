@@ -25,33 +25,54 @@ namespace ServerCore.Pages.Events
         {
             Sort = sort;
 
-            var teamsData = await PuzzleStateHelper.GetSparseQuery(_context, this.Event, null, null)
+            List<TeamStats> teams = await PuzzleStateHelper.GetSparseQuery(_context, this.Event, null, null)
                 .Where(s => s.SolvedTime != null && s.Puzzle.IsPuzzle)
                 .GroupBy(state => state.Team)
-                .Select(g => new {
+                .Select(g => new TeamStats
+                {
                     Team = g.Key,
                     SolveCount = g.Count(),
                     Score = g.Sum(s => s.Puzzle.SolveValue),
                     FinalMetaSolveTime = g.Where(s => s.Puzzle.IsCheatCode).Any() ?
-                        DateTime.MaxValue :
-                        (g.Where(s => s.Puzzle.IsFinalPuzzle).Select(s => s.SolvedTime).FirstOrDefault() ?? DateTime.MaxValue)
+                            DateTime.MaxValue :
+                            (g.Where(s => s.Puzzle.IsFinalPuzzle).Select(s => s.SolvedTime).FirstOrDefault() ?? DateTime.MaxValue)
                 })
                 .OrderBy(t => t.FinalMetaSolveTime).ThenByDescending(t => t.Score).ThenBy(t => t.Team.Name)
                 .ToListAsync();
 
-            var teams = new List<TeamStats>(teamsData.Count);
-            TeamStats prevStats = null;
-            for (int i = 0; i < teamsData.Count; i++)
+            if (this.Event.USE_ALTERNATE_FINAL_META_SCORING)
             {
-                var data = teamsData[i];
-                var stats = new TeamStats()
+                int adjustment = 0;
+                for (int i = 0; i < teams.Count; i++)
                 {
-                    Team = data.Team,
-                    SolveCount = data.SolveCount,
-                    Score = data.Score,
-                    FinalMetaSolveTime = data.FinalMetaSolveTime
-                };
+                    var data = teams[i];
+                    if (data.FinalMetaSolveTime != DateTime.MaxValue)
+                    {
+                        data.Score -= adjustment;
+                        adjustment = Math.Min(adjustment + this.Event.FINAL_META_DELTA, this.Event.MAX_FINAL_META_ADJUSTMENT);
+                    }
+                }
+                teams.Sort((a, b) => {
+                    // List.Sort is unstable so we have to explicitly specify the secondary keys.
+                    int comparison = a.Score.CompareTo(b.Score);
+                    if (comparison == 0)
+                    {
+                        comparison = a.FinalMetaSolveTime.CompareTo(b.FinalMetaSolveTime);
+                        if (comparison == 0)
+                        {
+                            comparison = a.Team.Name.CompareTo(b.Team.Name);
+                        }
+                    }
+                    return comparison;
+                });
+            }
 
+            TeamStats prevStats = null;
+            for (int i = 0; i < teams.Count; i++)
+            {
+                TeamStats stats = teams[i];
+
+                // This code assigns the same rank to two teams with the same score and the same final meta solve time.
                 if (prevStats == null || stats.FinalMetaSolveTime != prevStats.FinalMetaSolveTime || stats.Score != prevStats.Score)
                 {
                     stats.Rank = i + 1;
@@ -61,11 +82,10 @@ namespace ServerCore.Pages.Events
                     stats.Rank = prevStats.Rank;
                 }
 
-                teams.Add(stats);
                 prevStats = stats;
             }
 
-            switch(sort)
+            switch (sort)
             {
                 case SortOrder.RankAscending:
                     break;
@@ -79,26 +99,46 @@ namespace ServerCore.Pages.Events
                     teams.Sort((a, b) => -a.Team.Name.CompareTo(b.Team.Name));
                     break;
                 case SortOrder.PuzzlesAscending:
-                    teams.Sort((a, b) => a.SolveCount.CompareTo(b.SolveCount));
+                    SortTeams(teams, (a, b) => a.SolveCount.CompareTo(b.SolveCount));
                     break;
                 case SortOrder.PuzzlesDescending:
-                    teams.Sort((a, b) => -a.SolveCount.CompareTo(b.SolveCount));
+                    SortTeams(teams, (a, b) => -a.SolveCount.CompareTo(b.SolveCount));
                     break;
                 case SortOrder.ScoreAscending:
-                    teams.Sort((a, b) => a.Score.CompareTo(b.Score));
+                    SortTeams(teams, (a, b) => a.Score.CompareTo(b.Score));
                     break;
                 case SortOrder.ScoreDescending:
-                    teams.Sort((a, b) => -a.Score.CompareTo(b.Score));
+                    SortTeams(teams, (a, b) => -a.Score.CompareTo(b.Score));
                     break;
                 case SortOrder.HintsUsedAscending:
-                    teams.Sort((a, b) => a.Score.CompareTo(b.Team.HintCoinsUsed));
+                    SortTeams(teams, (a, b) => a.Score.CompareTo(b.Team.HintCoinsUsed));
                     break;
                 case SortOrder.HintsUsedDescending:
-                    teams.Sort((a, b) => -a.Score.CompareTo(b.Team.HintCoinsUsed));
+                    SortTeams(teams, (a, b) => -a.Score.CompareTo(b.Team.HintCoinsUsed));
                     break;
             }
 
             this.Teams = teams;
+        }
+
+        public void SortTeams(List<TeamStats> teams, Comparison<TeamStats> comparator) {
+            // List.Sort is unstable so we have to explicitly specify the secondary keys
+            // to get a stable result. Breaks ties by rank and then by name. Don't need 
+            // to consider score or final meta solve time because ranks being equal implies
+            // those are equal too.
+            teams.Sort((a, b) =>
+            {
+                int comparison = comparator(a, b);
+                if (comparison == 0)
+                {
+                    comparison = a.Rank.CompareTo(b.Rank);
+                    if (comparison == 0)
+                    {
+                        comparison = a.Team.Name.CompareTo(b.Team.Name);
+                    }
+                }
+                return comparison;
+            });
         }
 
         public SortOrder? SortForColumnLink(SortOrder ascendingSort, SortOrder descendingSort)
@@ -123,7 +163,7 @@ namespace ServerCore.Pages.Events
             public Team Team;
             public int SolveCount;
             public int Score;
-            public int? Rank;
+            public int Rank;
             public DateTime FinalMetaSolveTime = DateTime.MaxValue;
         }
 
